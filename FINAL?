@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sales CRM</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50">
+    <div id="root"></div>
+    
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // localStorage helper functions
+        const storage = {
+            get: (key) => {
+                try {
+                    const item = localStorage.getItem(key);
+                    return item ? JSON.parse(item) : [];
+                } catch (e) {
+                    return [];
+                }
+            },
+            set: (key, value) => {
+                try {
+                    localStorage.setItem(key, JSON.stringify(value));
+                } catch (e) {
+                    console.error('Storage error:', e);
+                }
+            }
+        };
+
+        function CRM() {
+            const [contacts, setContacts] = useState([]);
+            const [activities, setActivities] = useState([]);
+            const [tasks, setTasks] = useState([]);
+            const [sequences, setSequences] = useState([]);
+            const [activeTab, setActiveTab] = useState('contacts');
+            const [showAddContact, setShowAddContact] = useState(false);
+            const [showAddTask, setShowAddTask] = useState(false);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [stageFilter, setStageFilter] = useState(null);
+            const [expandedContact, setExpandedContact] = useState(null);
+            const [expandedSequence, setExpandedSequence] = useState(null);
+            const [editingNotes, setEditingNotes] = useState(null);
+            const [newContact, setNewContact] = useState({
+                name: '', company: '', email: '', phone: '', industry: '', revenue: '', fundingAmount: '', stage: 'Cold Lead', notes: ''
+            });
+            const [newTask, setNewTask] = useState({ contactId: null, dueDate: '', notes: '' });
+
+            const stages = ['Cold Lead', 'Nurture', 'Application Out', 'Application Submitted', 'Offer In', 'Funded'];
+            const industries = ['Technology', 'Healthcare', 'Finance', 'Manufacturing', 'Retail', 'Other'];
+
+            const sequenceSteps = [
+                { day: 1, action: 'Call' }, { day: 1, action: 'Email' },
+                { day: 2, action: 'Call' }, { day: 2, action: 'Email' },
+                { day: 3, action: 'Call' }, { day: 4, action: 'Call' }, { day: 4, action: 'Email' },
+                { day: 5, action: 'Call' }, { day: 6, action: 'Call' },
+                { day: 7, action: 'Call' }, { day: 7, action: 'Email' },
+                { day: 8, action: 'Call' }, { day: 9, action: 'Call' },
+                { day: 10, action: 'Call' }, { day: 10, action: 'Email' },
+                { day: 11, action: 'Call' }, { day: 12, action: 'Call' },
+                { day: 13, action: 'Call' }, { day: 14, action: 'Call' },
+                { day: 28, action: 'Email' }
+            ];
+
+            // Load from localStorage on mount
+            useEffect(() => {
+                setContacts(storage.get('contacts'));
+                setActivities(storage.get('activities'));
+                setTasks(storage.get('tasks'));
+                setSequences(storage.get('sequences'));
+            }, []);
+
+            // Save to localStorage whenever data changes
+            useEffect(() => { storage.set('contacts', contacts); }, [contacts]);
+            useEffect(() => { storage.set('activities', activities); }, [activities]);
+            useEffect(() => { storage.set('tasks', tasks); }, [tasks]);
+            useEffect(() => { storage.set('sequences', sequences); }, [sequences]);
+
+            function addContact() {
+                if (newContact.name && newContact.company) {
+                    const contact = { ...newContact, id: Date.now(), lastContact: new Date().toISOString().split('T')[0] };
+                    setContacts([...contacts, contact]);
+                    setNewContact({ name: '', company: '', email: '', phone: '', industry: '', revenue: '', fundingAmount: '', stage: 'Cold Lead', notes: '' });
+                    setShowAddContact(false);
+                }
+            }
+
+            function updateContactStage(id, newStage) {
+                setContacts(contacts.map(c => c.id === id ? { ...c, stage: newStage, lastContact: new Date().toISOString().split('T')[0] } : c));
+                
+                const stageIndex = stages.indexOf(newStage);
+                const submittedIndex = stages.indexOf('Application Submitted');
+                if (stageIndex >= submittedIndex) {
+                    setSequences(sequences.map(s => s.contactId === id ? { ...s, paused: true } : s));
+                }
+            }
+
+            function updateContactNotes(id, notes) {
+                setContacts(contacts.map(c => c.id === id ? { ...c, notes } : c));
+                setEditingNotes(null);
+            }
+
+            function quickLogCall(contactId) {
+                const now = new Date();
+                const date = now.toISOString().split('T')[0];
+                const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+                
+                const activity = { id: Date.now(), contactId, type: 'Call', date, time, notes: 'Call attempt' };
+                setActivities([...activities, activity]);
+                setContacts(contacts.map(c => c.id === contactId ? { ...c, lastContact: date } : c));
+                
+                const todayTask = tasks.find(t => t.contactId === contactId && t.isSequenceTask && t.sequenceAction === 'Call' && t.dueDate === date);
+                if (todayTask) completeSequenceTask(contactId, todayTask.id, todayTask.sequenceStep);
+            }
+
+            function quickLogEmail(contact) {
+                const now = new Date();
+                const date = now.toISOString().split('T')[0];
+                const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+                
+                const activity = { id: Date.now(), contactId: contact.id, type: 'Email', date, time, notes: 'Email sent' };
+                setActivities([...activities, activity]);
+                setContacts(contacts.map(c => c.id === contact.id ? { ...c, lastContact: date } : c));
+                
+                const todayTask = tasks.find(t => t.contactId === contact.id && t.isSequenceTask && t.sequenceAction === 'Email' && t.dueDate === date);
+                if (todayTask) completeSequenceTask(contact.id, todayTask.id, todayTask.sequenceStep);
+                
+                const template = {
+                    subject: `Partnership opportunity with ${contact.company}`,
+                    body: `Hi ${contact.name.split(' ')[0]},\n\nI wanted to reach out regarding potential financing solutions for ${contact.company}.\n\nWould you be available for a brief call this week?\n\nBest regards`
+                };
+                window.location.href = `mailto:${contact.email}?subject=${encodeURIComponent(template.subject)}&body=${encodeURIComponent(template.body)}`;
+            }
+
+            function startSequence(contactId) {
+                const startDate = new Date().toISOString().split('T')[0];
+                const newSeq = { id: Date.now(), contactId, startDate, currentStep: 0, paused: false };
+                setSequences([...sequences, newSeq]);
+                createNextSequenceTask(contactId, 0, startDate);
+            }
+
+            function stopSequence(contactId) {
+                setSequences(sequences.filter(s => s.contactId !== contactId));
+                setTasks(tasks.filter(t => !(t.contactId === contactId && t.isSequenceTask)));
+            }
+
+            function createNextSequenceTask(contactId, stepIndex, startDate) {
+                if (stepIndex >= sequenceSteps.length) {
+                    setContacts(contacts.map(c => c.id === contactId ? { ...c, stage: 'Nurture' } : c));
+                    stopSequence(contactId);
+                    return;
+                }
+
+                const step = sequenceSteps[stepIndex];
+                const start = new Date(startDate);
+                const dueDate = new Date(start);
+                dueDate.setDate(start.getDate() + step.day - 1);
+                
+                const task = {
+                    id: Date.now(),
+                    contactId,
+                    dueDate: dueDate.toISOString().split('T')[0],
+                    notes: `Day ${step.day} - ${step.action} (Sequence)`,
+                    isSequenceTask: true,
+                    sequenceStep: stepIndex,
+                    sequenceAction: step.action
+                };
+                
+                setTasks(prev => [...prev, task]);
+            }
+
+            function completeSequenceTask(contactId, taskId, stepIndex) {
+                setTasks(tasks.filter(t => t.id !== taskId));
+                
+                const seq = sequences.find(s => s.contactId === contactId);
+                if (seq && !seq.paused) {
+                    const nextStep = stepIndex + 1;
+                    setSequences(sequences.map(s => s.contactId === contactId ? { ...s, currentStep: nextStep } : s));
+                    createNextSequenceTask(contactId, nextStep, seq.startDate);
+                }
+            }
+
+            function addTask() {
+                if (newTask.contactId && newTask.dueDate) {
+                    setTasks([...tasks, { ...newTask, id: Date.now(), isSequenceTask: false }]);
+                    setNewTask({ contactId: null, dueDate: '', notes: '' });
+                    setShowAddTask(false);
+                }
+            }
+
+            function deleteTask(taskId) {
+                setTasks(tasks.filter(t => t.id !== taskId));
+            }
+
+            function deleteActivity(activityId) {
+                setActivities(activities.filter(a => a.id !== activityId));
+            }
+
+            function canDeleteActivity(activityDate) {
+                return activityDate === new Date().toISOString().split('T')[0];
+            }
+
+            const getContactSequence = (contactId) => sequences.find(s => s.contactId === contactId);
+            
+            const getSequenceProgress = (seq) => {
+                if (!seq) return null;
+                const currentDay = sequenceSteps[seq.currentStep]?.day || 28;
+                return { currentStep: seq.currentStep + 1, totalSteps: sequenceSteps.length, currentDay, paused: seq.paused };
+            };
+
+            const filteredContacts = contacts.filter(c => {
+                const matchesSearch = c.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                     c.company?.toLowerCase().includes(searchTerm.toLowerCase());
+                const matchesStage = !stageFilter || c.stage === stageFilter;
+                return matchesSearch && matchesStage;
+            });
+
+            const getContactActivities = (contactId) => {
+                return activities.filter(a => a.contactId === contactId).sort((a, b) => 
+                    new Date(b.date + ' ' + b.time) - new Date(a.date + ' ' + a.time)
+                );
+            };
+
+            const stats = {
+                nurture: contacts.filter(c => c.stage === 'Nurture').length,
+                applicationsOut: contacts.filter(c => ['Application Out', 'Application Submitted', 'Offer In', 'Funded'].includes(c.stage)).length,
+                applicationsSubmitted: contacts.filter(c => ['Application Submitted', 'Offer In', 'Funded'].includes(c.stage)).length,
+                offersReceived: contacts.filter(c => ['Offer In', 'Funded'].includes(c.stage)).length,
+                funded: contacts.filter(c => c.stage === 'Funded').length,
+                totalFunding: contacts.filter(c => c.stage === 'Funded').reduce((sum, c) => sum + (parseFloat(c.fundingAmount) || 0), 0)
+            };
+
+            const today = new Date().toISOString().split('T')[0];
+            const overdueTasks = tasks.filter(t => t.dueDate < today);
+            const upcomingTasks = tasks.filter(t => t.dueDate >= today);
+
+            return (
+                <div className="min-h-screen bg-gray-50">
+                    <div className="max-w-7xl mx-auto p-6">
+                        <div className="bg-white rounded-lg shadow-sm mb-6 p-6">
+                            <h1 className="text-3xl font-bold text-gray-900 mb-2">Sales CRM</h1>
+                            <p className="text-gray-600">Data saved locally in your browser</p>
+                        </div>
+
+                        <div className="grid grid-cols-6 gap-4 mb-6">
+                            {[
+                                { label: 'Nurture', value: stats.nurture, color: 'indigo', stage: 'Nurture' },
+                                { label: 'Applications Out', value: stats.applicationsOut, color: 'blue', stage: 'Application Out' },
+                                { label: 'Submitted', value: stats.applicationsSubmitted, color: 'purple', stage: 'Application Submitted' },
+                                { label: 'Offers', value: stats.offersReceived, color: 'orange', stage: 'Offer In' },
+                                { label: 'Funded', value: stats.funded, color: 'green', stage: 'Funded' },
+                            ].map(stat => (
+                                <button
+                                    key={stat.label}
+                                    onClick={() => { setStageFilter(stat.stage); setActiveTab('contacts'); }}
+                                    className="bg-white p-4 rounded-lg shadow-sm hover:shadow-md text-left"
+                                >
+                                    <p className="text-sm text-gray-600">{stat.label}</p>
+                                    <p className={`text-2xl font-bold text-${stat.color}-600`}>{stat.value}</p>
+                                </button>
+                            ))}
+                            <div className="bg-white p-4 rounded-lg shadow-sm">
+                                <p className="text-sm text-gray-600">Total Funded</p>
+                                <p className="text-xl font-bold text-gray-900">${(stats.totalFunding / 1000000).toFixed(1)}M</p>
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-lg shadow-sm">
+                            <div className="border-b border-gray-200 px-6">
+                                <div className="flex space-x-8">
+                                    <button onClick={() => setActiveTab('contacts')} className={`py-4 border-b-2 font-medium text-sm ${activeTab === 'contacts' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500'}`}>
+                                        Contacts ({contacts.length})
+                                    </button>
+                                    <button onClick={() => setActiveTab('tasks')} className={`py-4 border-b-2 font-medium text-sm ${activeTab === 'tasks' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500'}`}>
+                                        Tasks ({tasks.length})
+                                        {overdueTasks.length > 0 && <span className="ml-2 px-2 py-0.5 text-xs bg-red-100 text-red-800 rounded-full">{overdueTasks.length} overdue</span>}
+                                    </button>
+                                    <button onClick={() => setActiveTab('activities')} className={`py-4 border-b-2 font-medium text-sm ${activeTab === 'activities' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500'}`}>
+                                        Activities ({activities.length})
+                                    </button>
+                                </div>
+                            </div>
+
+                            {activeTab === 'contacts' && (
+                                <div className="p-6">
+                                    <div className="flex justify-between items-center mb-4">
+                                        <div className="flex items-center space-x-4 flex-1">
+                                            <input
+                                                type="text"
+                                                placeholder="Search contacts..."
+                                                value={searchTerm}
+                                                onChange={(e) => setSearchTerm(e.target.value)}
+                                                className="flex-1 max-w-md px-4 py-2 border border-gray-300 rounded-lg"
+                                            />
+                                            {stageFilter && (
+                                                <div className="flex items-center space-x-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+                                                    <span className="text-sm text-blue-900">Filtering: {stageFilter}</span>
+                                                    <button onClick={() => setStageFilter(null)} className="text-blue-600">✕</button>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <button onClick={() => setShowAddContact(true)} className="ml-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                            + Add Contact
+                                        </button>
+                                    </div>
+
+                                    {showAddContact && (
+                                        <div className="mb-6 p-4 border border-gray-200 rounded-lg bg-gray-50">
+                                            <h3 className="font-semibold text-lg mb-4">New Contact</h3>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <input type="text" placeholder="Name *" value={newContact.name} onChange={(e) => setNewContact({...newContact, name: e.target.value})} className="px-3 py-2 border rounded-lg" />
+                                                <input type="text" placeholder="Company *" value={newContact.company} onChange={(e) => setNewContact({...newContact, company: e.target.value})} className="px-3 py-2 border rounded-lg" />
+                                                <input type="email" placeholder="Email" value={newContact.email} onChange={(e) => setNewContact({...newContact, email: e.target.value})} className="px-3 py-2 border rounded-lg" />
+                                                <input type="tel" placeholder="Phone" value={newContact.phone} onChange={(e) => setNewContact({...newContact, phone: e.target.value})} className="px-3 py-2 border rounded-lg" />
+                                                <select value={newContact.industry} onChange={(e) => setNewContact({...newContact, industry: e.target.value})} className="px-3 py-2 border rounded-lg">
+                                                    <option value="">Select Industry</option>
+                                                    {industries.map(ind => <option key={ind}>{ind}</option>)}
+                                                </select>
+                                                <input type="number" placeholder="Funding Amount" value={newContact.fundingAmount} onChange={(e) => setNewContact({...newContact, fundingAmount: e.target.value})} className="px-3 py-2 border rounded-lg" />
+                                                <textarea placeholder="Notes" value={newContact.notes} onChange={(e) => setNewContact({...newContact, notes: e.target.value})} className="px-3 py-2 border rounded-lg col-span-2" rows="2" />
+                                            </div>
+                                            <div className="mt-4 flex space-x-2">
+                                                <button onClick={addContact} className="px-4 py-2 bg-blue-600 text-white rounded-lg">Save</button>
+                                                <button onClick={() => setShowAddContact(false)} className="px-4 py-2 bg-gray-300 rounded-lg">Cancel</button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <div className="space-y-3">
+                                        {filteredContacts.length === 0 && (
+                                            <div className="text-center py-12 text-gray-500">
+                                                <p className="text-lg">No contacts found</p>
+                                                <p className="text-sm">Add your first contact to get started</p>
+                                            </div>
+                                        )}
+                                        {filteredContacts.map(contact => {
+                                            const contactActivities = getContactActivities(contact.id);
+                                            const sequence = getContactSequence(contact.id);
+                                            const seqProgress = getSequenceProgress(sequence);
+                                            const isExpanded = expandedContact === contact.id;
+                                            
+                                            return (
+                                                <div key={contact.id} className="border border-gray-200 rounded-lg bg-white">
+                                                    <div className="p-4">
+                                                        <div className="flex justify-between items-start mb-3">
+                                                            <div className="flex-1">
+                                                                <div className="flex items-center space-x-3 mb-1">
+                                                                    <h3 className="text-lg font-semibold">{contact.name}</h3>
+                                                                    {seqProgress && (
+                                                                        <button
+                                                                            onClick={() => setExpandedSequence(expandedSequence === contact.id ? null : contact.id)}
+                                                                            className="px-2 py-1 bg-gradient-to-r from-blue-500 to-purple-500 text-white text-xs rounded-full"
+                                                                        >
+                                                                            Day {seqProgress.currentDay}/28 {seqProgress.paused ? '(Paused)' : ''}
+                                                                        </button>
+                                                                    )}
+                                                                    <select value={contact.stage} onChange={(e) => updateContactStage(contact.id, e.target.value)} className="px-2 py-1 border rounded text-sm">
+                                                                        {stages.map(stage => <option key={stage}>{stage}</option>)}
+                                                                    </select>
+                                                                </div>
+                                                                <p className="text-sm text-gray-600">{contact.company} • {contact.industry}</p>
+                                                                <p className="text-sm text-gray-600">{contact.email} • {contact.phone}</p>
+                                                                <p className="text-sm text-gray-600">
+                                                                    Funding: ${contact.fundingAmount ? (parseFloat(contact.fundingAmount) / 1000).toFixed(0) + 'K' : '-'} • Last Contact: {contact.lastContact}
+                                                                </p>
+                                                            </div>
+                                                            <div className="flex flex-col space-y-2">
+                                                                <div className="flex space-x-2">
+                                                                    <button onClick={() => quickLogEmail(contact)} className="p-2 text-blue-600 hover:bg-blue-50 rounded" title="Email">📧</button>
+                                                                    <button onClick={() => quickLogCall(contact.id)} className="p-2 text-green-600 hover:bg-green-50 rounded" title="Call">📞</button>
+                                                                    <button onClick={() => { setNewTask({ ...newTask, contactId: contact.id }); setShowAddTask(true); }} className="p-2 text-purple-600 hover:bg-purple-50 rounded" title="Task">📅</button>
+                                                                </div>
+                                                                {!sequence ? (
+                                                                    <button onClick={() => startSequence(contact.id)} className="px-3 py-1.5 bg-green-600 text-white text-xs rounded hover:bg-green-700">
+                                                                        ▶ Start Sequence
+                                                                    </button>
+                                                                ) : (
+                                                                    <button onClick={() => stopSequence(contact.id)} className="px-3 py-1.5 bg-red-600 text-white text-xs rounded hover:bg-red-700">
+                                                                        ■ Stop Sequence
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </div>
+
+                                                        {expandedSequence === contact.id && sequence && (
+                                                            <div className="mt-3 mb-3 p-3 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200">
+                                                                <h4 className="text-sm font-semibold mb-2">Sequence Timeline</h4>
+                                                                <div className="grid grid-cols-2 gap-2 text-xs">
+                                                                    {sequenceSteps.map((step, idx) => (
+                                                                        <div key={idx} className={`px-2 py-1 rounded ${idx < seqProgress.currentStep - 1 ? 'bg-green-100 text-green-800 line-through' : idx === seqProgress.currentStep - 1 ? 'bg-yellow-100 text-yellow-800 font-semibold' : 'bg-gray-100 text-gray-600'}`}>
+                                                                            Day {step.day}: {step.action}
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        )}
+
+                                                        <div className="mt-3 pt-3 border-t">
+                                                            <div className="flex items-start justify-between">
+                                                                <div className="flex-1">
+                                                                    <p className="text-xs font-medium text-gray-500 mb-1">NOTES</p>
+                                                                    {editingNotes === contact.id ? (
+                                                                        <textarea
+                                                                            value={contact.notes}
+                                                                            onChange={(e) => updateContactNotes(contact.id, e.target.value)}
+                                                                            className="w-full px-2 py-1 border rounded text-sm"
+                                                                            rows="3"
+                                                                            autoFocus
+                                                                            onBlur={() => setEditingNotes(null)}
+                                                                        />
+                                                                    ) : (
+                                                                        <p className="text-sm text-gray-700">{contact.notes || 'No notes. Click edit to add.'}</p>
+                                                                    )}
+                                                                </div>
+                                                                <button onClick={() => setEditingNotes(contact.id)} className="ml-2 p-1 text-gray-400 hover:text-gray-600">✏️</button>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="mt-3 pt-3 border-t">
+                                                            <button onClick={() => setExpandedContact(isExpanded ? null : contact.id)} className="flex items-center justify-between w-full text-left">
+                                                                <div className="flex items-center space-x-4">
+                                                                    <p className="text-xs font-medium text-gray-500">ACTIVITY HISTORY</p>
+                                                                    <span className="text-xs text-gray-500">{contactActivities.length} total</span>
+                                                                </div>
+                                                                <span className="text-gray-400">{isExpanded ? '▲' : '▼'}</span>
+                                                            </button>
+                                                        </div>
+                                                    </div>
+
+                                                    {isExpanded && (
+                                                        <div className="px-4 pb-4">
+                                                            <div className="space-y-2">
+                                                                {contactActivities.map(activity => (
+                                                                    <div key={activity.id} className="flex items-start justify-between p-2 bg-gray-50 rounded">
+                                                                        <div>
+                                                                            <p className="text-sm">{activity.notes}</p>
+                                                                            <p className="text-xs text-gray-500">{activity.date} at {activity.time}</p>
+                                                                        </div>
+                                                                        {canDeleteActivity(activity.date) && (
+                                                                            <button onClick={() => deleteActivity(activity.id)} className="text-red-600 text-xs">✕</button>
+                                                                        )}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {activeTab === 'tasks' && (
+                                <div className="p-6">
+                                    <div className="flex justify-between mb-4">
+                                        <h2 className="text-lg font-semibold">Tasks</h2>
+                                        <button onClick={() => setShowAddTask(true)} className="px-4 py-2 bg-blue-600 text-white rounded-lg">+ Add Task</button>
+                                    </div>
+
+                                    {showAddTask && (
+                                        <div className="mb-6 p-4 border rounded-lg bg-gray-50">
+                                            <h3 className="font-semibold mb-4">New Task</h3>
+                                            <select value={newTask.contactId || ''} onChange={(e) => setNewTask({...newTask, contactId: parseInt(e.target.value)})} className="w-full px-3 py-2 border rounded-lg
