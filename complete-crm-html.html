@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sales CRM</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50">
+    <div id="root"></div>
+    
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        const SCRIPT_URL = 'https://script.google.com/a/macros/parkviewadvance.com/s/AKfycbymGReDTFOjtNQX1lm_STlYFtx669r-WkQDuLhUydTJOT4E0j1v2j2WZclcbJboLR2a/exec';
+
+        function CRM() {
+            const [loading, setLoading] = useState(true);
+            const [contacts, setContacts] = useState([]);
+            const [activities, setActivities] = useState([]);
+            const [tasks, setTasks] = useState([]);
+            const [sequences, setSequences] = useState([]);
+            const [activeTab, setActiveTab] = useState('contacts');
+            const [syncing, setSyncing] = useState(false);
+            const [showAddContact, setShowAddContact] = useState(false);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [stageFilter, setStageFilter] = useState(null);
+            const [newContact, setNewContact] = useState({
+                name: '', company: '', email: '', phone: '', industry: '', revenue: '', fundingAmount: '', stage: 'Cold Lead', notes: ''
+            });
+
+            const stages = ['Cold Lead', 'Nurture', 'Application Out', 'Application Submitted', 'Offer In', 'Funded'];
+            const industries = ['Technology', 'Healthcare', 'Finance', 'Manufacturing', 'Retail', 'Other'];
+
+            useEffect(() => {
+                loadAllData();
+            }, []);
+
+            async function loadAllData() {
+                setLoading(true);
+                try {
+                    await Promise.all([
+                        loadData('Contacts', setContacts),
+                        loadData('Activities', setActivities),
+                        loadData('Tasks', setTasks),
+                        loadData('Sequences', setSequences)
+                    ]);
+                } catch (error) {
+                    console.error('Error loading:', error);
+                }
+                setLoading(false);
+            }
+
+            async function loadData(tab, setter) {
+                try {
+                    const res = await fetch(`${SCRIPT_URL}?action=read&tab=${tab}`);
+                    const result = await res.json();
+                    if (result.success) setter(result.data);
+                } catch (err) {
+                    console.error(`Error loading ${tab}:`, err);
+                }
+            }
+
+            async function saveToSheet(tab, record) {
+                setSyncing(true);
+                try {
+                    await fetch(`${SCRIPT_URL}?action=write&tab=${tab}`, {
+                        method: 'POST',
+                        body: JSON.stringify(record)
+                    });
+                } catch (err) {
+                    console.error('Save error:', err);
+                }
+                setSyncing(false);
+            }
+
+            async function updateInSheet(tab, record) {
+                setSyncing(true);
+                try {
+                    await fetch(`${SCRIPT_URL}?action=update&tab=${tab}`, {
+                        method: 'POST',
+                        body: JSON.stringify(record)
+                    });
+                } catch (err) {
+                    console.error('Update error:', err);
+                }
+                setSyncing(false);
+            }
+
+            async function addContact() {
+                if (newContact.name && newContact.company) {
+                    const contact = { ...newContact, id: Date.now(), lastContact: new Date().toISOString().split('T')[0] };
+                    setContacts([...contacts, contact]);
+                    await saveToSheet('Contacts', contact);
+                    setNewContact({ name: '', company: '', email: '', phone: '', industry: '', revenue: '', fundingAmount: '', stage: 'Cold Lead', notes: '' });
+                    setShowAddContact(false);
+                }
+            }
+
+            async function quickLogCall(contactId) {
+                const now = new Date();
+                const date = now.toISOString().split('T')[0];
+                const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+                
+                const activity = { id: Date.now(), contactId, type: 'Call', date, time, notes: 'Call attempt' };
+                setActivities([...activities, activity]);
+                await saveToSheet('Activities', activity);
+                
+                const contact = contacts.find(c => c.id === contactId);
+                if (contact) {
+                    const updated = { ...contact, lastContact: date };
+                    setContacts(contacts.map(c => c.id === contactId ? updated : c));
+                    await updateInSheet('Contacts', updated);
+                }
+            }
+
+            async function quickLogEmail(contact) {
+                const now = new Date();
+                const date = now.toISOString().split('T')[0];
+                const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+                
+                const activity = { id: Date.now(), contactId: contact.id, type: 'Email', date, time, notes: 'Email sent' };
+                setActivities([...activities, activity]);
+                await saveToSheet('Activities', activity);
+                
+                const updated = { ...contact, lastContact: date };
+                setContacts(contacts.map(c => c.id === contact.id ? updated : c));
+                await updateInSheet('Contacts', updated);
+                
+                const template = {
+                    subject: `Partnership opportunity with ${contact.company}`,
+                    body: `Hi ${contact.name.split(' ')[0]},\\n\\nI wanted to reach out regarding potential financing solutions for ${contact.company}.\\n\\nWould you be available for a brief call this week?\\n\\nBest regards`
+                };
+                window.open(`mailto:${contact.email}?subject=${encodeURIComponent(template.subject)}&body=${encodeURIComponent(template.body)}`, '_blank');
+            }
+
+            const filteredContacts = contacts.filter(c => {
+                const matchesSearch = c.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                     c.company?.toLowerCase().includes(searchTerm.toLowerCase());
+                const matchesStage = !stageFilter || c.stage === stageFilter;
+                return matchesSearch && matchesStage;
+            });
+
+            const stats = {
+                nurture: contacts.filter(c => c.stage === 'Nurture').length,
+                applicationsOut: contacts.filter(c => ['Application Out', 'Application Submitted', 'Offer In', 'Funded'].includes(c.stage)).length,
+                funded: contacts.filter(c => c.stage === 'Funded').length,
+                totalFunding: contacts.filter(c => c.stage === 'Funded').reduce((sum, c) => sum + (parseFloat(c.fundingAmount) || 0), 0)
+            };
+
+            if (loading) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center">
+                        <div className="text-center">
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                            <p className="text-xl text-gray-600">Loading CRM...</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen bg-gray-50">
+                    <div className="max-w-7xl mx-auto p-6">
+                        <div className="bg-white rounded-lg shadow-sm mb-6 p-6">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h1 className="text-3xl font-bold text-gray-900 mb-2">Sales CRM</h1>
+                                    <p className="text-gray-600">Synced with Google Sheets</p>
+                                </div>
+                                {syncing && (
+                                    <div className="flex items-center text-blue-600">
+                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                                        <span className="text-sm">Syncing...</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-4 gap-4 mb-6">
+                            <button
+                                onClick={() => { setStageFilter('Nurture'); setActiveTab('contacts'); }}
+                                className="bg-white p-4 rounded-lg shadow-sm hover:shadow-md text-left"
+                            >
+                                <p className="text-sm text-gray-600">Nurture</p>
+                                <p className="text-2xl font-bold text-indigo-600">{stats.nurture}</p>
+                            </button>
+                            <button
+                                onClick={() => { setStageFilter('Application Out'); setActiveTab('contacts'); }}
+                                className="bg-white p-4 rounded-lg shadow-sm hover:shadow-md text-left"
+                            >
+                                <p className="text-sm text-gray-600">Applications Out</p>
+                                <p className="text-2xl font-bold text-blue-600">{stats.applicationsOut}</p>
+                            </button>
+                            <button
+                                onClick={() => { setStageFilter('Funded'); setActiveTab('contacts'); }}
+                                className="bg-white p-4 rounded-lg shadow-sm hover:shadow-md text-left"
+                            >
+                                <p className="text-sm text-gray-600">Funded</p>
+                                <p className="text-2xl font-bold text-green-600">{stats.funded}</p>
+                            </button>
+                            <div className="bg-white p-4 rounded-lg shadow-sm">
+                                <p className="text-sm text-gray-600">Total Funded</p>
+                                <p className="text-xl font-bold text-gray-900">${(stats.totalFunding / 1000000).toFixed(1)}M</p>
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-lg shadow-sm">
+                            <div className="border-b border-gray-200 px-6">
+                                <div className="flex space-x-8">
+                                    <button
+                                        onClick={() => setActiveTab('contacts')}
+                                        className={`py-4 border-b-2 font-medium text-sm ${activeTab === 'contacts' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500'}`}
+                                    >
+                                        Contacts ({contacts.length})
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveTab('activities')}
+                                        className={`py-4 border-b-2 font-medium text-sm ${activeTab === 'activities' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500'}`}
+                                    >
+                                        Activities ({activities.length})
+                                    </button>
+                                </div>
+                            </div>
+
+                            {activeTab === 'contacts' && (
+                                <div className="p-6">
+                                    <div className="flex justify-between items-center mb-4">
+                                        <div className="flex items-center space-x-4 flex-1">
+                                            <input
+                                                type="text"
+                                                placeholder="Search contacts..."
+                                                value={searchTerm}
+                                                onChange={(e) => setSearchTerm(e.target.value)}
+                                                className="flex-1 max-w-md px-4 py-2 border border-gray-300 rounded-lg"
+                                            />
+                                            {stageFilter && (
+                                                <div className="flex items-center space-x-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+                                                    <span className="text-sm text-blue-900">Filtering: {stageFilter}</span>
+                                                    <button onClick={() => setStageFilter(null)} className="text-blue-600">✕</button>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <button
+                                            onClick={() => setShowAddContact(true)}
+                                            className="ml-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                                        >
+                                            + Add Contact
+                                        </button>
+                                    </div>
+
+                                    {showAddContact && (
+                                        <div className="mb-6 p-4 border border-gray-200 rounded-lg bg-gray-50">
+                                            <h3 className="font-semibold text-lg mb-4">New Contact</h3>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <input type="text" placeholder="Name *" value={newContact.name} onChange={(e) => setNewContact({...newContact, name: e.target.value})} className="px-3 py-2 border rounded-lg" />
+                                                <input type="text" placeholder="Company *" value={newContact.company} onChange={(e) => setNewContact({...newContact, company: e.target.value})} className="px-3 py-2 border rounded-lg" />
+                                                <input type="email" placeholder="Email" value={newContact.email} onChange={(e) => setNewContact({...newContact, email: e.target.value})} className="px-3 py-2 border rounded-lg" />
+                                                <input type="tel" placeholder="Phone" value={newContact.phone} onChange={(e) => setNewContact({...newContact, phone: e.target.value})} className="px-3 py-2 border rounded-lg" />
+                                                <select value={newContact.industry} onChange={(e) => setNewContact({...newContact, industry: e.target.value})} className="px-3 py-2 border rounded-lg">
+                                                    <option value="">Select Industry</option>
+                                                    {industries.map(ind => <option key={ind}>{ind}</option>)}
+                                                </select>
+                                                <input type="number" placeholder="Funding Amount" value={newContact.fundingAmount} onChange={(e) => setNewContact({...newContact, fundingAmount: e.target.value})} className="px-3 py-2 border rounded-lg" />
+                                            </div>
+                                            <div className="mt-4 flex space-x-2">
+                                                <button onClick={addContact} className="px-4 py-2 bg-blue-600 text-white rounded-lg">Save</button>
+                                                <button onClick={() => setShowAddContact(false)} className="px-4 py-2 bg-gray-300 rounded-lg">Cancel</button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <div className="space-y-3">
+                                        {filteredContacts.length === 0 && (
+                                            <div className="text-center py-12 text-gray-500">
+                                                <p className="text-lg">No contacts found</p>
+                                                <p className="text-sm">Add your first contact to get started</p>
+                                            </div>
+                                        )}
+                                        {filteredContacts.map(contact => (
+                                            <div key={contact.id} className="border border-gray-200 rounded-lg bg-white p-4">
+                                                <div className="flex justify-between items-start">
+                                                    <div className="flex-1">
+                                                        <h3 className="text-lg font-semibold">{contact.name}</h3>
+                                                        <p className="text-sm text-gray-600">{contact.company} • {contact.industry}</p>
+                                                        <p className="text-sm text-gray-600">{contact.email} • {contact.phone}</p>
+                                                        <p className="text-sm text-gray-600">
+                                                            Funding: ${contact.fundingAmount ? (parseFloat(contact.fundingAmount) / 1000).toFixed(0) + 'K' : '-'} • 
+                                                            Stage: {contact.stage}
+                                                        </p>
+                                                    </div>
+                                                    <div className="flex space-x-2">
+                                                        <button onClick={() => quickLogEmail(contact)} className="p-2 text-blue-600 hover:bg-blue-50 rounded" title="Email">
+                                                            📧
+                                                        </button>
+                                                        <button onClick={() => quickLogCall(contact.id)} className="p-2 text-green-600 hover:bg-green-50 rounded" title="Call">
+                                                            📞
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {activeTab === 'activities' && (
+                                <div className="p-6">
+                                    <h2 className="text-lg font-semibold mb-4">All Activities</h2>
+                                    <div className="space-y-3">
+                                        {activities.sort((a, b) => new Date(b.date + ' ' + b.time) - new Date(a.date + ' ' + a.time)).map(activity => {
+                                            const contact = contacts.find(c => c.id === activity.contactId);
+                                            return (
+                                                <div key={activity.id} className="p-4 border border-gray-200 rounded-lg bg-white">
+                                                    <div className="flex justify-between">
+                                                        <div>
+                                                            <p className="font-medium">{contact?.name} - {contact?.company}</p>
+                                                            <p className="text-sm text-gray-600">{activity.notes}</p>
+                                                        </div>
+                                                        <div className="text-right">
+                                                            <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">{activity.type}</span>
+                                                            <p className="text-xs text-gray-500 mt-1">{activity.date} {activity.time}</p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<CRM />);
+    </script>
+</body>
+</html>
